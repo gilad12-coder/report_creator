@@ -7,10 +7,10 @@ targeted intelligence reports with appropriate context from different tree level
 import logging
 from typing import Dict, List, LiteralString
 from opentelemetry import trace
-from config import SECTION_QUERIES, SECTION_TITLES, NUMBERED_SECTION_TITLES
-from digest_layer import QueryLevel
-from retrieval_index import RetrievalIndex
-from utils import chat_completion
+from src.utils.config import SECTION_QUERIES, SECTION_TITLES, NUMBERED_SECTION_TITLES
+from src.core.digest_layer import QueryLevel
+from src.core.retrieval_index import RetrievalIndex
+from src.utils.utils import chat_completion
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)

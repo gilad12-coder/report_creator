@@ -15,8 +15,8 @@ from typing import Dict, List, Any, Tuple
 from tqdm import tqdm
 from opentelemetry import trace
 
-from config import LEAF_TEMPLATE, BRANCH_TEMPLATE, ROOT_TEMPLATE, LEAF_SIZE, BRANCH_SIZE
-from utils import chat_completion, format_facts_for_display
+from src.utils.config import LEAF_TEMPLATE, BRANCH_TEMPLATE, ROOT_TEMPLATE, LEAF_SIZE, BRANCH_SIZE
+from src.utils.utils import chat_completion, format_facts_for_display
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)

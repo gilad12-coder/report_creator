@@ -11,8 +11,8 @@ import logging
 from typing import Dict, List, Any, Tuple, Optional
 from tqdm import tqdm
 from opentelemetry import trace
-from config import FACT_EXTRACTION_TEMPLATE, RELEVANCE_CHECK_TEMPLATE
-from utils import chunk_text, chat_completion
+from src.utils.config import FACT_EXTRACTION_TEMPLATE, RELEVANCE_CHECK_TEMPLATE
+from src.utils.utils import chunk_text, chat_completion
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)

@@ -18,9 +18,9 @@ from pylate import models
 from neo4j import GraphDatabase
 from opentelemetry import trace
 
-from config import QUERY_CLASSIFICATION_TEMPLATE
-from digest_layer import DigestTree, QueryLevel
-from utils import chat_completion, format_fact_for_retrieval
+from src.utils.config import QUERY_CLASSIFICATION_TEMPLATE
+from src.core.digest_layer import DigestTree, QueryLevel
+from src.utils.utils import chat_completion, format_fact_for_retrieval
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)

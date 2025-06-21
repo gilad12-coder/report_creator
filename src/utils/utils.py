@@ -10,7 +10,7 @@ import requests
 import os
 from opentelemetry import trace
 
-from config import HYPER_URL, LIGHTWEIGHT_MODEL, PREMIUM_MODEL, RATE_LIMIT_CONFIG, MAX_CHUNK_SIZE, CHUNK_OVERLAP
+from src.utils.config import HYPER_URL, LIGHTWEIGHT_MODEL, PREMIUM_MODEL, RATE_LIMIT_CONFIG, MAX_CHUNK_SIZE, CHUNK_OVERLAP
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -304,7 +304,7 @@ def setup_logging() -> None:
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler('intel_pipeline.log'),
+            logging.FileHandler('../../intel_pipeline.log'),
             logging.StreamHandler()
         ]
     )

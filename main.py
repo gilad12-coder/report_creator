@@ -17,12 +17,12 @@ from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry import trace
 from dotenv import load_dotenv
 
-from config import DEFAULT_NEO4J_CONFIG, LIGHTWEIGHT_MODEL, PREMIUM_MODEL
-from utils import load_jsonl, get_utc_timestamp
-from fact_extractor import FactExtractor
-from digest_layer import DigestLayer
-from retrieval_index import RetrievalIndex
-from report_generator import SectionedReportGenerator
+from src.utils.config import DEFAULT_NEO4J_CONFIG, LIGHTWEIGHT_MODEL, PREMIUM_MODEL
+from src.utils.utils import load_jsonl, get_utc_timestamp
+from src.core.fact_extractor import FactExtractor
+from src.core.digest_layer import DigestLayer
+from src.core.retrieval_index import RetrievalIndex
+from src.core.report_generator import SectionedReportGenerator
 
 load_dotenv()
 
