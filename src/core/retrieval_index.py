@@ -21,6 +21,7 @@ from opentelemetry import trace
 from src.utils.config import QUERY_CLASSIFICATION_TEMPLATE
 from src.core.digest_layer import DigestTree, QueryLevel
 from src.utils.utils import chat_completion, format_fact_for_retrieval
+from src.utils.config import RETRIEVAL_MODEL
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -59,9 +60,9 @@ class RetrievalIndex:
             self._initialize_hierarchical_schema()
 
             self.model = models.ColBERT(
-                model_name_or_path="lightonai/colbertv2.0"
+                model_name_or_path=RETRIEVAL_MODEL
             )
-            span.set_attribute("model.name", "lightonai/colbertv2.0")
+            span.set_attribute("model.name", RETRIEVAL_MODEL)
 
             self.documents = []
             self.document_embeddings = []
@@ -79,7 +80,6 @@ class RetrievalIndex:
 
             session.run("CREATE CONSTRAINT doc_id IF NOT EXISTS FOR (d:Document) REQUIRE d.id IS UNIQUE")
             session.run("CREATE INDEX doc_level IF NOT EXISTS FOR (d:Document) ON (d.level)")
-            session.run("CREATE INDEX doc_confidence IF NOT EXISTS FOR (d:Document) ON (d.confidence)")
             session.run("CREATE INDEX doc_tree_position IF NOT EXISTS FOR (d:Document) ON (d.tree_position)")
 
     def add_documents(self, digest_tree: DigestTree) -> None:
@@ -132,7 +132,6 @@ class RetrievalIndex:
                     level: $level,
                     tree_position: $tree_position,
                     level_index: $level_index,
-                    confidence: $confidence,
                     created: datetime()
                 })
             """, {
@@ -141,8 +140,7 @@ class RetrievalIndex:
                 "text": text,
                 "level": level,
                 "tree_position": tree_position,
-                "level_index": i,
-                "confidence": 1.0 if level == "root" else 0.8
+                "level_index": i
             })
 
             if level == "fact" and self.tree_structure:

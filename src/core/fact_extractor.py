@@ -1,10 +1,3 @@
-"""
-Stage 1: Item-level fact extraction using structured prompts with lightweight LLM.
-
-Extracts structured WHO/WHAT/WHEN/WHERE/CONFIDENCE facts from intelligence items
-using chunked processing and retry logic for robust JSON parsing.
-Now includes relevance filtering to only process items related to the target.
-"""
 import json
 import re
 import logging
@@ -24,7 +17,7 @@ class FactExtractor:
 
     First filters items for relevance to target, then processes relevant items in chunks
     and applies retry logic for robust JSON parsing.
-    Returns facts with WHO/WHAT/WHEN/WHERE/CONFIDENCE structure.
+    Returns facts with WHO/WHAT/WHEN/WHERE structure.
     """
 
     def extract_facts(self, items: List[str], target_info: Optional[Dict[str, str]] = None) -> Tuple[
@@ -229,7 +222,7 @@ class FactExtractor:
 
     def _extract_from_chunk(self, chunk: str) -> List[Dict[str, Any]]:
         """
-        Extract facts from a single text chunk with retry logic using lightweight model.
+        Extract facts from a single text chunk with enhanced retry logic and robust JSON parsing.
 
         Args:
             chunk: Text chunk to process
@@ -243,11 +236,11 @@ class FactExtractor:
             prompt = FACT_EXTRACTION_TEMPLATE.render(item_text=chunk)
             messages = [{"role": "user", "content": prompt}]
 
-            for attempt in range(3):
+            for attempt in range(4):
                 try:
                     response = chat_completion(
                         messages,
-                        max_tokens=500,
+                        max_tokens=800,
                         temperature=0.1,
                         operation_name="fact_extraction",
                         use_premium=False
@@ -255,102 +248,250 @@ class FactExtractor:
 
                     if not response or not response.strip():
                         logger.warning(f"Empty response on attempt {attempt + 1}")
-                        if attempt < 2:
-                            messages.append({"role": "user", "content": "Please provide a valid JSON response."})
+                        if attempt < 3:
+                            messages.append({
+                                "role": "user",
+                                "content": "Please provide a valid JSON array response. Example: [{\"who\": \"person\", \"what\": \"action\", \"when\": \"time\", \"where\": \"location\"}]"
+                            })
                             continue
                         else:
                             span.set_attribute("extraction.result", "empty_response")
                             return []
 
-                    cleaned_response = self._clean_json_response(response)
+                    facts = self._extract_json_with_fallbacks(response, attempt)
 
-                    if not cleaned_response:
-                        logger.warning(f"No valid JSON found in response on attempt {attempt + 1}")
-                        if attempt < 2:
-                            messages.extend([
-                                {"role": "assistant", "content": response},
-                                {"role": "user", "content": "Please provide ONLY a valid JSON array, no other text."}
-                            ])
-                            continue
-                        else:
-                            span.set_attribute("extraction.result", "no_valid_json")
-                            return []
-
-                    facts = json.loads(cleaned_response)
-
-                    if isinstance(facts, list):
-                        valid_facts = []
-                        for fact in facts:
-                            if isinstance(fact, dict) and all(
-                                    key in fact for key in ["who", "what", "when", "where", "confidence"]):
-                                valid_facts.append(fact)
-
+                    if facts is not None:
+                        valid_facts = self._validate_and_clean_facts(facts)
                         span.set_attribute("extraction.result", "success")
                         span.set_attribute("facts.extracted", len(valid_facts))
+                        logger.debug(f"Successfully extracted {len(valid_facts)} facts on attempt {attempt + 1}")
                         return valid_facts
                     else:
-                        logger.warning(f"Response is not a list on attempt {attempt + 1}")
-                        if attempt < 2:
+                        logger.warning(f"Failed to extract valid JSON on attempt {attempt + 1}")
+                        if attempt < 3:
+                            error_msg = FactExtractor._generate_retry_message(response, attempt)
                             messages.extend([
                                 {"role": "assistant", "content": response},
-                                {"role": "user", "content": "Please provide a JSON array (list) format."}
+                                {"role": "user", "content": error_msg}
                             ])
                             continue
 
-                except json.JSONDecodeError as e:
-                    logger.warning(f"JSON decode error on attempt {attempt + 1}: {e}")
-                    logger.debug(f"Problematic response: {repr(response)}")
-                    span.set_attribute("extraction.error", f"json_decode_error: {e}")
-                    if attempt < 2:
-                        messages.extend([
-                            {"role": "assistant", "content": response},
-                            {"role": "user",
-                             "content": f"JSON parsing failed: {e}. Please provide valid JSON format only."}
-                        ])
-                    else:
-                        logger.warning(f"Failed to extract facts from chunk after {attempt + 1} attempts")
                 except Exception as e:
                     logger.warning(f"Unexpected error on attempt {attempt + 1}: {e}")
                     span.set_attribute("extraction.error", f"unexpected_error: {e}")
-                    if attempt < 2:
-                        messages.append({"role": "user", "content": "Please try again with valid JSON format."})
+                    if attempt < 3:
+                        messages.append({
+                            "role": "user",
+                            "content": f"Error occurred: {e}. Please provide a clean JSON array format with no extra text."
+                        })
 
             span.set_attribute("extraction.result", "failed_all_attempts")
+            logger.warning(f"Failed to extract facts from chunk after all attempts")
             return []
 
     @staticmethod
-    def _clean_json_response(response: str) -> str:
+    def _extract_json_with_fallbacks(response: str, attempt: int) -> Optional[List[Dict[str, Any]]]:
         """
-        Clean the response to extract valid JSON.
+        Try multiple strategies to extract valid JSON from the response.
 
         Args:
-            response: Raw response from LLM
+            response: Raw LLM response
+            attempt: Current attempt number (for logging)
 
         Returns:
-            Cleaned JSON string or empty string if no valid JSON found
+            List of fact dictionaries if successful, None if failed
         """
-        if not response:
-            return ""
+        strategies = [
+            FactExtractor._extract_clean_json,
+            FactExtractor._extract_json_from_code_block,
+            FactExtractor._extract_json_with_regex,
+            FactExtractor._extract_json_lenient_parsing,
+            FactExtractor._fix_common_json_issues
+        ]
 
+        for i, strategy in enumerate(strategies):
+            try:
+                result = strategy(response)
+                if result is not None:
+                    logger.debug(f"JSON extraction successful with strategy {i + 1} on attempt {attempt + 1}")
+                    return result
+            except Exception as e:
+                logger.debug(f"Strategy {i + 1} failed: {e}")
+                continue
+
+        return None
+
+    @staticmethod
+    def _extract_clean_json(response: str) -> Optional[List[Dict[str, Any]]]:
+        """Try to parse response as direct JSON."""
         response = response.strip()
-
-        if response.startswith("```json"):
-            response = response[7:]
-        elif response.startswith("```"):
-            response = response[3:]
-
-        if response.endswith("```"):
-            response = response[:-3]
-
-        response = response.strip()
-
-        json_pattern = r'\[.*?\]'
-        matches = re.findall(json_pattern, response, re.DOTALL)
-
-        if matches:
-            return matches[0]
-
         if response.startswith('[') and response.endswith(']'):
-            return response
+            return json.loads(response)
+        return None
 
-        return ""
+    @staticmethod
+    def _extract_json_from_code_block(response: str) -> Optional[List[Dict[str, Any]]]:
+        """Extract JSON from markdown code blocks."""
+        if "```json" in response:
+            start = response.find("```json") + 7
+            end = response.find("```", start)
+            if end != -1:
+                json_str = response[start:end].strip()
+                return json.loads(json_str)
+        elif "```" in response:
+            start = response.find("```") + 3
+            end = response.find("```", start)
+            if end != -1:
+                json_str = response[start:end].strip()
+                if json_str.startswith('['):
+                    return json.loads(json_str)
+        return None
+
+    @staticmethod
+    def _extract_json_with_regex(response: str) -> Optional[List[Dict[str, Any]]]:
+        """Use regex to find JSON array in response."""
+        pattern = r'\[(?:[^[\]]|(?:\[[^\]]*\]))*\]'
+        matches = re.findall(pattern, response, re.DOTALL)
+
+        for match in matches:
+            try:
+                cleaned = match.strip()
+                if cleaned.startswith('[') and cleaned.endswith(']'):
+                    return json.loads(cleaned)
+            except json.JSONDecodeError:
+                continue
+        return None
+
+    @staticmethod
+    def _extract_json_lenient_parsing(response: str) -> Optional[List[Dict[str, Any]]]:
+        """Try to find and parse JSON with more lenient approach."""
+        start_idx = response.find('[')
+        end_idx = response.rfind(']')
+
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            potential_json = response[start_idx:end_idx + 1]
+            try:
+                return json.loads(potential_json)
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    @staticmethod
+    def _fix_common_json_issues(response: str) -> Optional[List[Dict[str, Any]]]:
+        """Try to fix common JSON formatting issues."""
+        start_idx = response.find('[')
+        end_idx = response.rfind(']')
+
+        if start_idx == -1 or end_idx == -1:
+            return None
+
+        json_str = response[start_idx:end_idx + 1]
+
+        fixes = [
+            (r',\s*}', '}'),
+            (r',\s*]', ']'),
+            (r'([{,]\s*)(\w+):', r'\1"\2":'),
+            (r"'([^']*)'", r'"\1"'),
+        ]
+
+        for pattern, replacement in fixes:
+            json_str = re.sub(pattern, replacement, json_str)
+
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def _validate_and_clean_facts(facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Validate and clean extracted facts.
+
+        Args:
+            facts: Raw list of fact dictionaries
+
+        Returns:
+            List of validated and cleaned fact dictionaries
+        """
+        if not isinstance(facts, list):
+            logger.warning(f"Facts is not a list: {type(facts)}")
+            return []
+
+        valid_facts = []
+        required_keys = {"who", "what", "when", "where"}
+
+        for i, fact in enumerate(facts):
+            if not isinstance(fact, dict):
+                logger.warning(f"Fact {i} is not a dictionary: {type(fact)}")
+                continue
+
+            if not required_keys.issubset(fact.keys()):
+                missing_keys = required_keys - set(fact.keys())
+                logger.warning(f"Fact {i} missing required keys: {missing_keys}")
+                continue
+
+            cleaned_fact = FactExtractor._clean_individual_fact(fact)
+            if cleaned_fact:
+                valid_facts.append(cleaned_fact)
+            else:
+                logger.warning(f"Fact {i} failed validation after cleaning")
+
+        return valid_facts
+
+    @staticmethod
+    def _clean_individual_fact(fact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Clean and validate individual fact.
+
+        Args:
+            fact: Single fact dictionary
+
+        Returns:
+            Cleaned fact dictionary or None if invalid
+        """
+        try:
+            cleaned = {
+                "who": str(fact.get("who", "unknown")).strip(),
+                "what": str(fact.get("what", "unknown")).strip(),
+                "when": str(fact.get("when", "unknown")).strip(),
+                "where": str(fact.get("where", "unknown")).strip()
+            }
+
+            if all(v in ["unknown", "", "Unknown", "UNKNOWN"] for v in
+                   [cleaned["who"], cleaned["what"], cleaned["when"], cleaned["where"]]):
+                logger.warning("Fact has all unknown values, skipping")
+                return None
+
+            return cleaned
+
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Error cleaning fact: {e}")
+            return None
+
+    @staticmethod
+    def _generate_retry_message(response: str, attempt: int) -> str:
+        """
+        Generate specific retry message based on the response and attempt.
+
+        Args:
+            response: Failed response
+            attempt: Current attempt number
+
+        Returns:
+            Specific error message for retry
+        """
+        if not response.strip():
+            return "Response was empty. Please provide a JSON array with fact objects."
+
+        if '[' not in response or ']' not in response:
+            return "Response must be a JSON array starting with '[' and ending with ']'. Example: [{\"who\": \"person\", \"what\": \"action\", \"when\": \"time\", \"where\": \"location\"}]"
+
+        if '"who"' not in response or '"what"' not in response:
+            return "Each fact object must contain all required fields: 'who', 'what', 'when', 'where'. Please ensure proper JSON formatting."
+
+        if attempt == 0:
+            return "JSON parsing failed. Please ensure proper JSON syntax with double quotes around strings and proper comma separation."
+        elif attempt == 1:
+            return "Still having JSON issues. Please return ONLY a clean JSON array with no extra text, comments, or formatting."
+        else:
+            return "Final attempt: Provide exactly this format: [{\"who\": \"value\", \"what\": \"value\", \"when\": \"value\", \"where\": \"value\"}]"
