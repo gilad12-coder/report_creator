@@ -101,57 +101,108 @@ RELEVANCE_CHECK_TEMPLATE = Template("""
 """)
 
 FACT_EXTRACTION_TEMPLATE = Template("""
-You are an expert intelligence analyst specializing in structured fact extraction from raw intelligence reports.
+You are an expert intelligence analyst. Extract precise facts from the intelligence text below.
 
-Extract precise, actionable facts from intelligence text using a standardized 5-field structure.
+CRITICAL: Respond with ONLY a valid JSON array. No explanations, comments, or extra text.
+
+REQUIRED JSON FORMAT:
+[
+  {
+    "who": "specific person/organization name",
+    "what": "concrete action or event",
+    "when": "time information or 'unknown'",
+    "where": "location where the activity occurred or 'unknown'"
+  }
+]
+
+PARTICIPANT IDENTIFICATION (CRITICAL):
+- MANDATORY: Scan for ALL participants labeled as צד א, צד ב, צד ג, צד ד, etc.
+- Look for both primary names AND codenames in quotes
+- Include ALL people mentioned, even if they only appear once
+- Check meeting attendee lists, phone participants, observers, specialists
+- Never skip or combine multiple people into one entry
 
 EXTRACTION RULES:
-1. WHO: Specific individuals, organizations, groups (use exact names/codenames from text)
-2. WHAT: Concrete actions, events, activities (verbs + objects, be specific)
-3. WHEN: Temporal information (dates, times, time periods - extract exactly as written)
-4. WHERE: Geographic locations, addresses, facilities (use exact location names)
-5. CONFIDENCE: Your certainty level (0.1-1.0) based on source clarity and detail level
+- WHO: Exact names and codenames (preserve original language - Hebrew/Arabic exactly as written)
+- WHAT: Specific actions with verbs and objects (preserve original Hebrew/Arabic - NEVER TRANSLATE)
+- WHEN: Follow timestamp parsing guide below - resolve ALL relative dates from תז״ק
+- WHERE: Activity locations (preserve original language) or infer from participant base locations when activity spans multiple places
 
-CONFIDENCE SCORING:
-• 0.9-1.0: Direct quotes, specific details, multiple corroborating elements
-• 0.7-0.8: Clear statements with good detail, minor ambiguity
-• 0.5-0.6: Reasonable inference from context, some ambiguity
-• 0.3-0.4: Weak inference, significant ambiguity
-• 0.1-0.2: Highly uncertain, poor source quality
+TIMESTAMP PARSING GUIDE (MANDATORY WHEN תז״ק EXISTS):
+Step 1: Parse תז״ק format DDHHMMZMONTHYY
+  - Example: "010800ZJUN25" = Day 01, Hour 08, Minutes 00, Z timezone, June 2025
+  - This gives us: June 1, 2025, 08:00 Z as reference point
 
-QUALITY STANDARDS:
-- Extract ONLY facts explicitly stated or clearly implied
-- Use "unknown" for genuinely missing information
-- Preserve original names, codenames, and specific terminology
-- Split complex events into multiple distinct facts
-- Maintain chronological accuracy
-- Do not infer beyond what's reasonably supported
-- Avoid combining unrelated events
-- Don't add context not present in source
+Step 2: Calculate relative Hebrew days from this reference:
+  - יום א׳=Sunday, יום ב׳=Monday, יום ג׳=Tuesday, יום ד׳=Wednesday
+  - יום ה׳=Thursday, יום ו׳=Friday, יום ש׳=Saturday
 
-EXAMPLE INPUT:
-"Agent BLACKBIRD reported that Commander Hassan met with weapons supplier 'Abu-Saif' at the Green Mosque on Tuesday evening. They discussed shipment of 50 AK-47 rifles scheduled for delivery next month via the northern route."
+Step 3: Apply to relative dates in text:
+  - If timestamp is Monday and text says "יום ה׳", that's Thursday of same week
+  - Use calculated dates, NOT "unknown"
 
-EXAMPLE OUTPUT:
+LOCATION EXTRACTION RULES:
+- Primary: Extract explicit location mentions from activity descriptions
+- Secondary: When activity involves multiple parties in different cities, infer primary activity location from context
+- Preserve original Hebrew/Arabic place names exactly
+- For international transfers/communications, identify the transaction/meeting location
+
+QUOTED CONTENT EXTRACTION:
+- Extract operational codenames in quotes (e.g., "שחרור 5920", "המסילה החדשה")
+- Extract operational terms for money/equipment purposes (e.g., "האורחים החדשים")
+- Create separate fact entries for significant quoted operational content
+
+COMPREHENSIVE QUALITY STANDARDS:
+✓ Extract EVERY person mentioned (צד א through צד ז if they exist)
+✓ Parse תז״ק timestamp and resolve ALL relative dates
+✓ Preserve ALL Hebrew/Arabic text exactly - zero translation
+✓ Create separate facts for each person's distinct actions
+✓ Include location context from participant descriptions when relevant
+✓ Extract significant quoted operational content as separate facts
+
+✗ Never skip participants even if mentioned briefly
+✗ Never translate Hebrew/Arabic to English
+✗ Never use "unknown" for timing when תז״ק exists and relative dates can be calculated
+✗ Never combine multiple people's actions
+✗ Never miss quoted operational terms or codenames
+
+EXAMPLE:
+Input:
+סיווג: סודי ביותר
+תז״ק: 010800ZJUN25
+מזהה: INT-2025-4001
+מקור: יחידה 8200/BR-7421
+נדון: העברת כספים בינלאומית
+גוף הידיעה:
+צד א: אחמד א-שאמי (קוד קריאה "אבו-סאד", טלפון: +970-59-xxx-2847).
+צד ב: סוכן פיננסי בקהיר "אל-מואמן" (מוחמד עבד אל-רחמן).
+צד ג: נציג בנק בביירות "אבו-יוסף".
+בשיחת Signal מוצפנת ביקש אחמד להעביר 250,000 דולר דרך "המסילה החדשה" תוך 72 שעות. הכסף מיועד ל"האורחים החדשים" ו"הציוד המיוחד מאיסטנבול". אל-מואמן אישר העברה בשלושה שלבים: 100K, 75K, 75K. קוד אימות: "ירח כחול 7742".
+
+JSON Response (NO OTHER TEXT):
 [
-  {"who": "Commander Hassan", "what": "met with weapons supplier Abu-Saif", "when": "Tuesday evening", "where": "Green Mosque", "confidence": 0.8},
-  {"who": "Commander Hassan and Abu-Saif", "what": "discussed shipment of 50 AK-47 rifles", "when": "Tuesday evening", "where": "Green Mosque", "confidence": 0.8},
-  {"who": "Abu-Saif", "what": "scheduled delivery of rifles via northern route", "when": "next month", "where": "northern route", "confidence": 0.7}
+  {
+    "who": "אחמד א-שאמי (אבו-סאד)",
+    "what": "ביקש להעביר 250,000 דולר דרך המסילה החדשה",
+    "when": "תוך 72 שעות",
+    "where": "unknown"
+  },
+  {
+    "who": "אל-מואמן (מוחמד עבד אל-רחמן)",
+    "what": "אישר העברה בשלושה שלבים: 100K, 75K, 75K",
+    "when": "תוך 72 שעות",
+    "where": "קהיר"
+  },
+  {
+    "who": "אבו-יוסף",
+    "what": "מעורב בהעברת הכספים כנציג בנק",
+    "when": "תוך 72 שעות", 
+    "where": "ביירות"
+  }
 ]
 
-ANOTHER EXAMPLE INPUT:
-"Intercepted call: 'The package will arrive tomorrow at the usual place. Tell Ahmad to prepare the vehicles.'"
-
-EXAMPLE OUTPUT:
-[
-  {"who": "unknown caller", "what": "stated package will arrive", "when": "tomorrow", "where": "the usual place", "confidence": 0.6},
-  {"who": "unknown caller", "what": "instructed to tell Ahmad to prepare vehicles", "when": "unknown", "where": "unknown", "confidence": 0.7}
-]
-
-Intelligence Item:
+Intelligence Text:
 {{ item_text }}
-
-Return ONLY the JSON array with no additional text:
 """)
 
 DIGEST_TEMPLATE = Template("""
